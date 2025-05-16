@@ -28,12 +28,15 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 # --- Helper: Sanitize file names ---
 def sanitize_filename(name, max_length=60):
-    # Normalize Unicode characters and convert to ASCII.
+    """
+    Normalize Unicode and save only safe ASCII characters.
+    """
+    # Normalize and convert to ASCII (ignoring non-convertible characters)
     normalized = unicodedata.normalize('NFKD', name)
     ascii_str = normalized.encode('ASCII', 'ignore').decode('ASCII')
-    # Remove unwanted characters (allow letters, digits, underscore, dash, dot)
+    # Remove unwanted characters (allow only letters, digits, underscore, dash, dot)
     safe = re.sub(r'[^\w\s\.-]', '', ascii_str)
-    # Replace spaces with underscore and strip extra underscores.
+    # Replace whitespace with underscore and remove leading/trailing underscores.
     safe = re.sub(r'\s+', '_', safe).strip('_')
     return safe[:max_length]
 
@@ -49,7 +52,7 @@ async def start(bot: Client, m: Message):
     await m.reply_text(f"<b>Hello {m.from_user.mention} 👋\n\nI Am A Bot For Download Links From Your <b>.TXT</b> File And Then Upload That File On Telegram. Send /upload to begin.\n\nUse /stop to stop any ongoing task.</b>")
 
 @bot.on_message(filters.command("stop"))
-async def restart_handler(_, m: Message):
+async def restart_handler(_, m):
     await m.reply_text("**Stopped**🚦", quote=True)
     os.execl(sys.executable, sys.executable, *sys.argv)
 
@@ -67,7 +70,7 @@ async def upload(bot: Client, m: Message):
         with open(txt_file, "r") as f:
             content = f.read()
         lines = content.split("\n")
-        # Each line is split into two parts on "://"
+        # Only consider lines that have "://"
         links = [line.split("://", 1) for line in lines if "://" in line]
         os.remove(txt_file)
     except Exception as e:
@@ -75,7 +78,7 @@ async def upload(bot: Client, m: Message):
         os.remove(txt_file)
         return
 
-    await editable.edit(f"**𝕋ᴏᴛᴀʟ ʟɪɴᴋ𝕤 ғᴏᴜɴᴅ ᴀʀᴇ 🔗: {len(links)}**\n\n**Enter the starting index for downloads (default = 1):**")
+    await editable.edit(f"**𝕋ᴏᴛᴀʟ ʟɪɴᴋ𝕤 ғᴏᴜɴᴅ: {len(links)}**\n\n**Enter the starting index for downloads (default = 1):**")
     inp0: Message = await bot.listen(editable.chat.id)
     raw_index = inp0.text.strip()
     await inp0.delete(True)
@@ -94,13 +97,20 @@ async def upload(bot: Client, m: Message):
     raw_quality = inp2.text.strip()
     await inp2.delete(True)
     try:
-        if raw_quality == "144": res = "256x144"
-        elif raw_quality == "240": res = "426x240"
-        elif raw_quality == "360": res = "640x360"
-        elif raw_quality == "480": res = "854x480"
-        elif raw_quality == "720": res = "1280x720"
-        elif raw_quality == "1080": res = "1920x1080"
-        else: res = "UN"
+        if raw_quality == "144":
+            res = "256x144"
+        elif raw_quality == "240":
+            res = "426x240"
+        elif raw_quality == "360":
+            res = "640x360"
+        elif raw_quality == "480":
+            res = "854x480"
+        elif raw_quality == "720":
+            res = "1280x720"
+        elif raw_quality == "1080":
+            res = "1920x1080"
+        else:
+            res = "UN"
     except Exception:
         res = "UN"
 
@@ -110,8 +120,8 @@ async def upload(bot: Client, m: Message):
     await inp3.delete(True)
     highlighter = "️ ⁪⁬⁮⁮⁮"
     MR = highlighter if caption == "Robin" else caption
-
-    await editable.edit("**Now, send the Thumbnail URL (e.g., https://graph.org/file/ce1723991756e48c35aa1.jpg) or type = no:**")
+   
+    await editable.edit("**Now send the Thumbnail URL (e.g., https://graph.org/file/ce1723991756e48c35aa1.jpg) or type = no:**")
     inp6: Message = await bot.listen(editable.chat.id)
     thumb_input = inp6.text.strip()
     await inp6.delete(True)
@@ -119,19 +129,16 @@ async def upload(bot: Client, m: Message):
 
     thumb = None
     if thumb_input.lower() != "no" and (thumb_input.startswith("http://") or thumb_input.startswith("https://")):
-        # Download the thumbnail using wget.
         status, _ = getstatusoutput(f"wget '{thumb_input}' -O 'thumb.jpg'")
         if status == 0:
             thumb = "thumb.jpg"
 
-    if len(links) == 1:
-        cur_index = 1
-    else:
-        cur_index = start_index
+    # Use the provided start index or default.
+    cur_index = start_index
 
     try:
         for i in range(cur_index - 1, len(links)):
-            # Reconstruct URL
+            # Reconstruct URL from the second part
             raw_url_part = links[i][1].strip()
             url = "https://" + raw_url_part
             url = url.replace("file/d/", "uc?export=download&id=")\
@@ -139,7 +146,12 @@ async def upload(bot: Client, m: Message):
                      .replace("?modestbranding=1", "")\
                      .replace("/view?usp=sharing", "")
 
-            # Special handling for visionias links: get m3u8 link from webpage
+            # Filter out links that are clearly not intended for download (e.g. Google Fonts)
+            if any(x in url for x in ["fonts.googleapis", "fonts.gstatic"]):
+                await m.reply_text(f"Skipping invalid link: `{url}`")
+                continue
+
+            # Special handling for visionias links: extract m3u8 URL.
             if "visionias" in url:
                 async with ClientSession() as session:
                     async with session.get(url, headers={
@@ -167,7 +179,7 @@ async def upload(bot: Client, m: Message):
                 id_part = url.split("/")[-2]
                 url = "https://d26g5bnklkwsh4.cloudfront.net/" + id_part + "/master.m3u8"
 
-            # Sanitize the file label
+            # Use the raw label (first part), but sanitize it.
             raw_label = links[i][0]
             safe_label = sanitize_filename(raw_label)
             name = f"{str(cur_index).zfill(3)}_{safe_label}"
@@ -178,14 +190,14 @@ async def upload(bot: Client, m: Message):
             else:
                 ytf = f"b[height<={raw_quality}]/bv[height<={raw_quality}]+ba/b/bv+ba"
 
-            # Build yt-dlp command. For "jw-prod" URLs use a simpler command.
+            # Build the yt-dlp command.
             if "jw-prod" in url:
                 cmd = f'yt-dlp -o "{name}.mp4" "{url}"'
             else:
                 cmd = f'yt-dlp -f "{ytf}" "{url}" -o "{name}.mp4"'
 
             try:
-                # Build captions
+                # Build captions for video and pdf.
                 cc = f'**[📽️] Vid_ID:** {str(cur_index).zfill(3)}. ** {name}{MR}.mkv\n**𝔹ᴀᴛᴄʜ** » **{batch_name}**'
                 cc1 = f'**[📁] Pdf_ID:** {str(cur_index).zfill(3)}. {name}{MR}.pdf\n**𝔹ᴀᴛᴄʜ** » **{batch_name}**'
                 
@@ -204,10 +216,9 @@ async def upload(bot: Client, m: Message):
                 
                 elif ".pdf" in url:
                     try:
-                        # Download PDF using subprocess and check if file exists.
                         pdf_filename = f"{name}.pdf"
                         cmd_pdf = f'yt-dlp -o "{pdf_filename}" "{url}" -R 25 --fragment-retries 25'
-                        result = subprocess.run(cmd_pdf, shell=True)
+                        subprocess.run(cmd_pdf, shell=True)
                         if os.path.isfile(pdf_filename):
                             await bot.send_document(chat_id=m.chat.id, document=pdf_filename, caption=cc1)
                             os.remove(pdf_filename)
@@ -219,9 +230,10 @@ async def upload(bot: Client, m: Message):
                         time.sleep(e.x)
                         continue
                 else:
-                    # For video links (e.g. mp4, m3u8)
-                    status_message = (f"**⥥ 🄳🄾🅆🄽🄻🄾🄰🄳🄸🄽🄶⬇️⬇️... »**\n\n"
-                                      f"**📝Name »** `{name}`\n❄Quality » {raw_quality}\n\n**🔗URL »** `{url}`")
+                    status_message = (
+                        f"**⥥ 🄳🄾🅆🄽🄻🄾🄰🄳🄸🄽🄶⬇️⬇️... »**\n\n"
+                        f"**📝Name »** `{name}`\n❄Quality » {raw_quality}\n\n**🔗URL »** `{url}`"
+                    )
                     prog = await m.reply_text(status_message)
                     res_file = await helper.download_video(url, cmd, name)
                     if res_file and os.path.isfile(res_file):
