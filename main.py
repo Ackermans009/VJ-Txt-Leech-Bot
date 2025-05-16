@@ -9,9 +9,10 @@ import time
 import asyncio
 import requests
 import subprocess
+import unicodedata
 
-import core as helper  # Assumes helper.py holds download/download_video functions
-from utils import progress_bar  # Optional for showing progress
+import core as helper  # Assumes helper.py contains download, download_video, send_vid functions.
+from utils import progress_bar  # Optional: for visual progress tracking if needed.
 from vars import API_ID, API_HASH, BOT_TOKEN
 
 from aiohttp import ClientSession
@@ -21,8 +22,21 @@ from subprocess import getstatusoutput
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.errors import FloodWait
-from pyrogram.errors.exceptions.bad_request_400 import StickerEmojiInvalid
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+# --- Helper to sanitize filenames ---
+def sanitize_filename(name, max_length=60):
+    """
+    Normalize and remove non-ASCII characters and unwanted symbols.
+    """
+    # Normalize Unicode to NFKD form and encode to ASCII (ignoring non-convertible characters)
+    name = unicodedata.normalize('NFKD', name)
+    name = name.encode('ascii', 'ignore').decode('ascii')
+    # Remove characters except alphanumerics, whitespace, dashes and underscores
+    name = re.sub(r'[^\w\s-]', '', name).strip()
+    # Replace whitespace with underscore
+    name = re.sub(r'\s+', '_', name)
+    return name[:max_length]
 
 bot = Client(
     "bot",
@@ -34,7 +48,7 @@ bot = Client(
 @bot.on_message(filters.command(["start"]))
 async def start(bot: Client, m: Message):
     await m.reply_text(
-        f"<b>Hello {m.from_user.mention} 👋\n\nI Am A Bot For Download Links From Your <b>.TXT</b> File And Then Upload That File To Telegram. "
+        f"<b>Hello {m.from_user.mention} 👋\n\nI Am A Bot For Downloading Links From Your <b>.TXT</b> File And Then Uploading That File To Telegram. "
         f"Send /upload to begin.\n\nUse /stop to terminate any ongoing task.</b>"
     )
 
@@ -57,12 +71,13 @@ async def upload(bot: Client, m: Message):
     try:
         with open(txt_file_path, "r") as f:
             content = f.read()
-        content = content.split("\n")
+        lines = content.strip().split("\n")
         links = []
-        # Each link is split into two parts: before and after "://"
-        for line in content:
+        # Expecting each line contains a text label & a URL separated by "://"
+        for line in lines:
             if "://" in line:
-                links.append(line.split("://", 1))
+                parts = line.split("://", 1)
+                links.append(parts)
         os.remove(txt_file_path)
     except Exception as e:
         await m.reply_text("**Invalid file input.**")
@@ -112,7 +127,6 @@ async def upload(bot: Client, m: Message):
     caption = input3.text.strip()
     await input3.delete(True)
     
-    # If you want a special output for a specific caption
     highlighter = f"️ ⁪⁬⁮⁮⁮"
     final_caption = highlighter if caption == "Robin" else caption
 
@@ -126,21 +140,26 @@ async def upload(bot: Client, m: Message):
 
     thumb = None
     if thumb_input.lower() != "no" and (thumb_input.startswith("http://") or thumb_input.startswith("https://")):
-        # Download thumbnail image using wget command
         status, _ = getstatusoutput(f"wget '{thumb_input}' -O 'thumb.jpg'")
         if status == 0:
             thumb = "thumb.jpg"
 
     try:
         for i in range(count - 1, len(links)):
-            # Reconstruct URL from the two parts obtained from the TXT file
+            # Sanitize file name from the label (first part of the line)
+            name_source = links[i][0]
+            sanitized_name = sanitize_filename(name_source)
+            name = f'{str(count).zfill(3)}_{sanitized_name}'
+            
+            # Reconstruct the URL from the second part
             url_part = links[i][1].strip()
             url = "https://" + url_part
             url = url.replace("file/d/", "uc?export=download&id=")
             url = url.replace("www.youtube-nocookie.com/embed", "youtu.be")
+            url = url.replace("www.youtube.com/embed", "youtu.be")
             url = url.replace("?modestbranding=1", "")
             url = url.replace("/view?usp=sharing", "")
-            
+
             # Special handling for visionias links
             if "visionias" in url:
                 async with ClientSession() as session:
@@ -161,8 +180,8 @@ async def upload(bot: Client, m: Message):
                         m3u8_match = re.search(r"(https://.*?playlist.m3u8.*?)\"", text)
                         if m3u8_match:
                             url = m3u8_match.group(1)
-            
-            # Handle ClassPlusApp videos
+
+            # Handling for ClassPlusApp videos
             elif 'videos.classplusapp' in url:
                 response = requests.get(
                     f'https://api.classplusapp.com/cams/uploader/video/jw-signed-url?url={url}',
@@ -170,33 +189,25 @@ async def upload(bot: Client, m: Message):
                 )
                 if response.status_code == 200:
                     url = response.json().get('url', url)
-            
+
             # Convert MPD streams to m3u8 if needed
             elif '/master.mpd' in url:
                 id_part = url.split("/")[-2]
                 url = "https://d26g5bnklkwsh4.cloudfront.net/" + id_part + "/master.m3u8"
-            
-            # Prepare a friendly file name using the first part of the line from the TXT file
-            name_source = links[i][0]
-            name1 = name_source.replace("\t", "").replace(":", "").replace("/", "").replace("+", "") \
-                              .replace("#", "").replace("|", "").replace("@", "").replace("*", "") \
-                              .replace(".", "").replace("https", "").replace("http", "").strip()
-            name = f'{str(count).zfill(3)}) {name1[:60]}'
 
             # Determine the quality format string for yt-dlp
             if "youtu" in url:
-                # For YouTube links, we use a format string that works without cookies for public videos.
                 ytf = f"b[height<={raw_text2}][ext=mp4]/bv[height<={raw_text2}][ext=mp4]+ba[ext=m4a]/b[ext=mp4]"
             else:
                 ytf = f"b[height<={raw_text2}]/bv[height<={raw_text2}]+ba/b/bv+ba"
             
-            # Build yt-dlp command
+            # Build the yt-dlp command; using a simpler command for "jw-prod" URLs
             if "jw-prod" in url:
                 cmd = f'yt-dlp -o "{name}.mp4" "{url}"'
             else:
                 cmd = f'yt-dlp -f "{ytf}" "{url}" -o "{name}.mp4"'
             
-            # Debug print to show the command for YouTube links
+            # Debug: print the command for YouTube links
             if "youtu" in url:
                 print(f"Downloading YouTube link with command: {cmd}")
             
