@@ -61,7 +61,7 @@ async def restart_handler(_, m: Message):
 
 @bot.on_message(filters.command(["upload"]))
 async def upload(bot: Client, m: Message):
-    editable = await m.reply_text("𝕤ᴇɴᴅ ᴛxᴛ ғɪʟᴇ ⚡️")
+    editable = await m.reply_text("𝕤ᴇɴᴅ ᴛxᴛ fær ɪɴᴘᴜᴛ ⚡️")
     input_msg: Message = await bot.listen(editable.chat.id)
     txt_file_path = await input_msg.download()
     await input_msg.delete(True)
@@ -155,7 +155,7 @@ async def upload(bot: Client, m: Message):
             # Define the output path (ensuring the file is stored in the proper folder)
             output_file = os.path.join(download_dir, f"{name}.mp4")
 
-            # Reconstruct the URL from the second part of the line.
+            # Reconstruct the URL from the second part.
             url_part = links[i][1].strip()
             url = "https://" + url_part
             url = url.replace("file/d/", "uc?export=download&id=")
@@ -199,16 +199,11 @@ async def upload(bot: Client, m: Message):
                 id_part = url.split("/")[-2]
                 url = "https://d26g5bnklkwsh4.cloudfront.net/" + id_part + "/master.m3u8"
 
-            # Determine the quality format string for yt-dlp:
+            # For YouTube links, use a simpler format selection.
             if "youtu" in url:
-                ytf = f"b[height<={raw_text2}][ext=mp4]/bv[height<={raw_text2}][ext=mp4]+ba[ext=m4a]/b[ext=mp4]"
+                cmd = f'yt-dlp -f best "{url}" -o "{output_file}"'
             else:
                 ytf = f"b[height<={raw_text2}]/bv[height<={raw_text2}]+ba/b/bv+ba"
-
-            # Build the yt-dlp command (using the full output path without external downloader options):
-            if "jw-prod" in url:
-                cmd = f'yt-dlp -o "{output_file}" "{url}"'
-            else:
                 cmd = f'yt-dlp -f "{ytf}" "{url}" -o "{output_file}"'
 
             if "youtu" in url:
@@ -254,13 +249,18 @@ async def upload(bot: Client, m: Message):
                         res_file = await helper.download_video(url, cmd, name)
                     except Exception as e:
                         err_msg = str(e)
-                        # If error indicates missing file or a sign-in requirement, skip this video.
                         if "No such file or directory" in err_msg or "Sign in to confirm" in err_msg:
                             await m.reply_text(f"**Skipping video {name}: {err_msg.strip()}**")
                             continue
                         else:
                             await m.reply_text(f"**Download interrupted for Name:** {name}\nError: {err_msg}\n**Link:** `{url}`")
                             continue
+
+                    # Check if the expected file exists before proceeding.
+                    if not os.path.isfile(res_file):
+                        await m.reply_text(f"**Skipping video {name}: File not found after download.**")
+                        continue
+
                     await prog.delete(True)
                     await helper.send_vid(bot, m, cc, res_file, thumb, name, prog)
                     count += 1
