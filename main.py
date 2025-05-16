@@ -5,15 +5,15 @@
 import os
 import re
 import sys
-import json
 import time
 import asyncio
 import requests
 import subprocess
 
-import core as helper
-from utils import progress_bar
+import core as helper  # Assumes helper.py holds download/download_video functions
+from utils import progress_bar  # Optional for showing progress
 from vars import API_ID, API_HASH, BOT_TOKEN
+
 from aiohttp import ClientSession
 from pyromod import listen
 from subprocess import getstatusoutput
@@ -22,67 +22,72 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.errors import FloodWait
 from pyrogram.errors.exceptions.bad_request_400 import StickerEmojiInvalid
-from pyrogram.types.messages_and_media import message
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-
 
 bot = Client(
     "bot",
     api_id=API_ID,
     api_hash=API_HASH,
-    bot_token=BOT_TOKEN)
-
+    bot_token=BOT_TOKEN
+)
 
 @bot.on_message(filters.command(["start"]))
 async def start(bot: Client, m: Message):
-    await m.reply_text(f"<b>Hello {m.from_user.mention} 👋\n\n I Am A Bot For Download Links From Your **.TXT** File And Then Upload That File On Telegram So Basically If You Want To Use Me First Send Me /upload Command And Then Follow Few Steps..\n\nUse /stop to stop any ongoing task.</b>")
-
+    await m.reply_text(
+        f"<b>Hello {m.from_user.mention} 👋\n\nI Am A Bot For Download Links From Your <b>.TXT</b> File And Then Upload That File To Telegram. "
+        f"Send /upload to begin.\n\nUse /stop to terminate any ongoing task.</b>"
+    )
 
 @bot.on_message(filters.command("stop"))
-async def restart_handler(_, m):
-    await m.reply_text("**Stopped**🚦", True)
+async def restart_handler(_, m: Message):
+    await m.reply_text("**Stopped**🚦", quote=True)
     os.execl(sys.executable, sys.executable, *sys.argv)
-
-
 
 @bot.on_message(filters.command(["upload"]))
 async def upload(bot: Client, m: Message):
-    editable = await m.reply_text('𝕤ᴇɴᴅ ᴛxᴛ ғɪʟᴇ ⚡️')
-    input: Message = await bot.listen(editable.chat.id)
-    x = await input.download()
-    await input.delete(True)
+    editable = await m.reply_text("𝕤ᴇɴᴅ ᴛxᴛ ғɪʟᴇ ⚡️")
+    input_msg: Message = await bot.listen(editable.chat.id)
+    txt_file_path = await input_msg.download()
+    await input_msg.delete(True)
 
+    # Create downloads folder for this chat if not exists
     path = f"./downloads/{m.chat.id}"
+    os.makedirs(path, exist_ok=True)
 
     try:
-       with open(x, "r") as f:
-           content = f.read()
-       content = content.split("\n")
-       links = []
-       for i in content:
-           links.append(i.split("://", 1))
-       os.remove(x)
-            # print(len(links)
-    except:
-           await m.reply_text("**Invalid file input.**")
-           os.remove(x)
-           return
-    
-   
-    await editable.edit(f"**𝕋ᴏᴛᴀʟ ʟɪɴᴋ𝕤 ғᴏᴜɴᴅ ᴀʀᴇ🔗🔗** **{len(links)}**\n\n**𝕊ᴇɴᴅ 𝔽ʀᴏᴍ ᴡʜᴇʀᴇ ʏᴏᴜ ᴡᴀɴᴛ ᴛᴏ ᴅᴏᴡɴʟᴏᴀᴅ ɪɴɪᴛɪᴀʟ ɪ𝕤** **1**")
+        with open(txt_file_path, "r") as f:
+            content = f.read()
+        content = content.split("\n")
+        links = []
+        # Each link is split into two parts: before and after "://"
+        for line in content:
+            if "://" in line:
+                links.append(line.split("://", 1))
+        os.remove(txt_file_path)
+    except Exception as e:
+        await m.reply_text("**Invalid file input.**")
+        os.remove(txt_file_path)
+        return
+
+    await editable.edit(
+        f"**Total links found: {len(links)}**\n\n**Enter the starting index for download (default is 1):**"
+    )
     input0: Message = await bot.listen(editable.chat.id)
-    raw_text = input0.text
+    raw_text = input0.text.strip()
     await input0.delete(True)
+    try:
+        count = int(raw_text) if raw_text.isdigit() and int(raw_text) > 0 else 1
+    except:
+        count = 1
 
-    await editable.edit("**Now Please Send Me Your Batch Name**")
+    await editable.edit("**Please send your Batch Name.**")
     input1: Message = await bot.listen(editable.chat.id)
-    raw_text0 = input1.text
+    batch_name = input1.text.strip()
     await input1.delete(True)
-    
 
-    await editable.edit("**𝔼ɴᴛᴇʀ ʀᴇ𝕤ᴏʟᴜᴛɪᴏɴ📸**\n144,240,360,480,720,1080 please choose quality")
+    await editable.edit("**Enter resolution (choose from 144, 240, 360, 480, 720, 1080):**")
     input2: Message = await bot.listen(editable.chat.id)
-    raw_text2 = input2.text
+    raw_text2 = input2.text.strip()
     await input2.delete(True)
     try:
         if raw_text2 == "144":
@@ -96,84 +101,115 @@ async def upload(bot: Client, m: Message):
         elif raw_text2 == "720":
             res = "1280x720"
         elif raw_text2 == "1080":
-            res = "1920x1080" 
-        else: 
+            res = "1920x1080"
+        else:
             res = "UN"
     except Exception:
-            res = "UN"
-    
-    
+        res = "UN"
 
-    await editable.edit("Now Enter A Caption to add caption on your uploaded file")
+    await editable.edit("**Enter a Caption for your uploaded file:**")
     input3: Message = await bot.listen(editable.chat.id)
-    raw_text3 = input3.text
+    caption = input3.text.strip()
     await input3.delete(True)
-    highlighter  = f"️ ⁪⁬⁮⁮⁮"
-    if raw_text3 == 'Robin':
-        MR = highlighter 
-    else:
-        MR = raw_text3
-   
-    await editable.edit("Now send the Thumb url/nEg » https://graph.org/file/ce1723991756e48c35aa1.jpg \n Or if don't want thumbnail send = no")
-    input6 = message = await bot.listen(editable.chat.id)
-    raw_text6 = input6.text
+    
+    # If you want a special output for a specific caption
+    highlighter = f"️ ⁪⁬⁮⁮⁮"
+    final_caption = highlighter if caption == "Robin" else caption
+
+    await editable.edit(
+        "Now send the Thumb URL (e.g., https://graph.org/file/ce1723991756e48c35aa1.jpg) or type = no if you don't want one"
+    )
+    input6: Message = await bot.listen(editable.chat.id)
+    thumb_input = input6.text.strip()
     await input6.delete(True)
     await editable.delete()
 
-    thumb = input6.text
-    if thumb.startswith("http://") or thumb.startswith("https://"):
-        getstatusoutput(f"wget '{thumb}' -O 'thumb.jpg'")
-        thumb = "thumb.jpg"
-    else:
-        thumb == "no"
-
-    if len(links) == 1:
-        count = 1
-    else:
-        count = int(raw_text)
+    thumb = None
+    if thumb_input.lower() != "no" and (thumb_input.startswith("http://") or thumb_input.startswith("https://")):
+        # Download thumbnail image using wget command
+        status, _ = getstatusoutput(f"wget '{thumb_input}' -O 'thumb.jpg'")
+        if status == 0:
+            thumb = "thumb.jpg"
 
     try:
         for i in range(count - 1, len(links)):
-
-            V = links[i][1].replace("file/d/","uc?export=download&id=").replace("www.youtube-nocookie.com/embed", "youtu.be").replace("?modestbranding=1", "").replace("/view?usp=sharing","") # .replace("mpd","m3u8")
-            url = "https://" + V
-
+            # Reconstruct URL from the two parts obtained from the TXT file
+            url_part = links[i][1].strip()
+            url = "https://" + url_part
+            url = url.replace("file/d/", "uc?export=download&id=")
+            url = url.replace("www.youtube-nocookie.com/embed", "youtu.be")
+            url = url.replace("?modestbranding=1", "")
+            url = url.replace("/view?usp=sharing", "")
+            
+            # Special handling for visionias links
             if "visionias" in url:
                 async with ClientSession() as session:
-                    async with session.get(url, headers={'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9', 'Accept-Language': 'en-US,en;q=0.9', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'Pragma': 'no-cache', 'Referer': 'http://www.visionias.in/', 'Sec-Fetch-Dest': 'iframe', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Site': 'cross-site', 'Upgrade-Insecure-Requests': '1', 'User-Agent': 'Mozilla/5.0 (Linux; Android 12; RMX2121) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Mobile Safari/537.36', 'sec-ch-ua': '"Chromium";v="107", "Not=A?Brand";v="24"', 'sec-ch-ua-mobile': '?1', 'sec-ch-ua-platform': '"Android"',}) as resp:
+                    async with session.get(url, headers={
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Cache-Control': 'no-cache',
+                        'Connection': 'keep-alive',
+                        'Pragma': 'no-cache',
+                        'Referer': 'http://www.visionias.in/',
+                        'Sec-Fetch-Dest': 'iframe',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'cross-site',
+                        'Upgrade-Insecure-Requests': '1',
+                        'User-Agent': 'Mozilla/5.0 (Linux; Android 12; RMX2121) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Mobile Safari/537.36',
+                    }) as resp:
                         text = await resp.text()
-                        url = re.search(r"(https://.*?playlist.m3u8.*?)\"", text).group(1)
-
+                        m3u8_match = re.search(r"(https://.*?playlist.m3u8.*?)\"", text)
+                        if m3u8_match:
+                            url = m3u8_match.group(1)
+            
+            # Handle ClassPlusApp videos
             elif 'videos.classplusapp' in url:
-             url = requests.get(f'https://api.classplusapp.com/cams/uploader/video/jw-signed-url?url={url}', headers={'x-access-token': 'eyJhbGciOiJIUzM4NCIsInR5cCI6IkpXVCJ9.eyJpZCI6MzgzNjkyMTIsIm9yZ0lkIjoyNjA1LCJ0eXBlIjoxLCJtb2JpbGUiOiI5MTcwODI3NzQyODkiLCJuYW1lIjoiQWNlIiwiZW1haWwiOm51bGwsImlzRmlyc3RMb2dpbiI6dHJ1ZSwiZGVmYXVsdExhbmd1YWdlIjpudWxsLCJjb3VudHJ5Q29kZSI6IklOIiwiaXNJbnRlcm5hdGlvbmFsIjowLCJpYXQiOjE2NDMyODE4NzcsImV4cCI6MTY0Mzg4NjY3N30.hM33P2ai6ivdzxPPfm01LAd4JWv-vnrSxGXqvCirCSpUfhhofpeqyeHPxtstXwe0'}).json()['url']
-
+                response = requests.get(
+                    f'https://api.classplusapp.com/cams/uploader/video/jw-signed-url?url={url}',
+                    headers={'x-access-token': 'eyJhbGciOiJIUzM4NCIsInR5cCI6IkpXVCJ9...'}
+                )
+                if response.status_code == 200:
+                    url = response.json().get('url', url)
+            
+            # Convert MPD streams to m3u8 if needed
             elif '/master.mpd' in url:
-             id =  url.split("/")[-2]
-             url =  "https://d26g5bnklkwsh4.cloudfront.net/" + id + "/master.m3u8"
-
-            name1 = links[i][0].replace("\t", "").replace(":", "").replace("/", "").replace("+", "").replace("#", "").replace("|", "").replace("@", "").replace("*", "").replace(".", "").replace("https", "").replace("http", "").strip()
+                id_part = url.split("/")[-2]
+                url = "https://d26g5bnklkwsh4.cloudfront.net/" + id_part + "/master.m3u8"
+            
+            # Prepare a friendly file name using the first part of the line from the TXT file
+            name_source = links[i][0]
+            name1 = name_source.replace("\t", "").replace(":", "").replace("/", "").replace("+", "") \
+                              .replace("#", "").replace("|", "").replace("@", "").replace("*", "") \
+                              .replace(".", "").replace("https", "").replace("http", "").strip()
             name = f'{str(count).zfill(3)}) {name1[:60]}'
 
+            # Determine the quality format string for yt-dlp
             if "youtu" in url:
+                # For YouTube links, we use a format string that works without cookies for public videos.
                 ytf = f"b[height<={raw_text2}][ext=mp4]/bv[height<={raw_text2}][ext=mp4]+ba[ext=m4a]/b[ext=mp4]"
             else:
                 ytf = f"b[height<={raw_text2}]/bv[height<={raw_text2}]+ba/b/bv+ba"
-
+            
+            # Build yt-dlp command
             if "jw-prod" in url:
                 cmd = f'yt-dlp -o "{name}.mp4" "{url}"'
             else:
                 cmd = f'yt-dlp -f "{ytf}" "{url}" -o "{name}.mp4"'
-
-            try:  
+            
+            # Debug print to show the command for YouTube links
+            if "youtu" in url:
+                print(f"Downloading YouTube link with command: {cmd}")
+            
+            try:
+                cc = f'**[📽️] Vid_ID:** {str(count).zfill(3)}.** {name}{final_caption}.mkv\n**𝔹ᴀᴛᴄʜ** » **{batch_name}**'
+                cc1 = f'**[📁] Pdf_ID:** {str(count).zfill(3)}. {name}{final_caption}.pdf \n**𝔹ᴀᴛᴄʜ** » **{batch_name}**'
                 
-                cc = f'**[📽️] Vid_ID:** {str(count).zfill(3)}.** {𝗻𝗮𝗺𝗲𝟭}{MR}.mkv\n**𝔹ᴀᴛᴄʜ** » **{raw_text0}**'
-                cc1 = f'**[📁] Pdf_ID:** {str(count).zfill(3)}. {𝗻𝗮𝗺𝗲𝟭}{MR}.pdf \n**𝔹ᴀᴛᴄʜ** » **{raw_text0}**'
                 if "drive" in url:
                     try:
-                        ka = await helper.download(url, name)
-                        copy = await bot.send_document(chat_id=m.chat.id,document=ka, caption=cc1)
-                        count+=1
-                        os.remove(ka)
+                        file_downloaded = await helper.download(url, name)
+                        await bot.send_document(chat_id=m.chat.id, document=file_downloaded, caption=cc1)
+                        count += 1
+                        os.remove(file_downloaded)
                         time.sleep(1)
                     except FloodWait as e:
                         await m.reply_text(str(e))
@@ -182,35 +218,37 @@ async def upload(bot: Client, m: Message):
                 
                 elif ".pdf" in url:
                     try:
-                        cmd = f'yt-dlp -o "{name}.pdf" "{url}"'
-                        download_cmd = f"{cmd} -R 25 --fragment-retries 25"
+                        cmd_pdf = f'yt-dlp -o "{name}.pdf" "{url}"'
+                        download_cmd = f"{cmd_pdf} -R 25 --fragment-retries 25"
                         os.system(download_cmd)
-                        copy = await bot.send_document(chat_id=m.chat.id, document=f'{name}.pdf', caption=cc1)
+                        await bot.send_document(chat_id=m.chat.id, document=f'{name}.pdf', caption=cc1)
                         count += 1
                         os.remove(f'{name}.pdf')
                     except FloodWait as e:
                         await m.reply_text(str(e))
                         time.sleep(e.x)
                         continue
+                
                 else:
-                    Show = f"**⥥ 🄳🄾🅆🄽🄻🄾🄰🄳🄸🄽🄶⬇️⬇️... »**\n\n**📝Name »** `{name}\n❄Quality » {raw_text2}`\n\n**🔗URL »** `{url}`"
-                    prog = await m.reply_text(Show)
+                    status_message = (
+                        f"**⥥ 🄳🄾🅆🄽🄻🄾🄰🄳🄸🄽🄶⬇️⬇️... »**\n\n"
+                        f"**📝Name »** `{name}`\n❄Quality » {raw_text2}\n\n**🔗URL »** `{url}`"
+                    )
+                    prog = await m.reply_text(status_message)
                     res_file = await helper.download_video(url, cmd, name)
-                    filename = res_file
                     await prog.delete(True)
-                    await helper.send_vid(bot, m, cc, filename, thumb, name, prog)
+                    await helper.send_vid(bot, m, cc, res_file, thumb, name, prog)
                     count += 1
                     time.sleep(1)
-
+            
             except Exception as e:
                 await m.reply_text(
-                    f"**downloading Interupted **\n{str(e)}\n**Name** » {name}\n**Link** » `{url}`"
+                    f"**Download interrupted for Name:** {name}\nError: {str(e)}\n**Link:** `{url}`"
                 )
                 continue
 
     except Exception as e:
-        await m.reply_text(e)
+        await m.reply_text(f"Error occurred: {str(e)}")
     await m.reply_text("**𝔻ᴏɴᴇ 𝔹ᴏ𝕤𝕤😎**")
-
 
 bot.run()
