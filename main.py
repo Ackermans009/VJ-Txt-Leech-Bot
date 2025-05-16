@@ -12,7 +12,7 @@ import subprocess
 import unicodedata
 
 import core as helper  # Assumes helper.py contains download, download_video, send_vid functions.
-from utils import progress_bar  # Optional: for visual progress tracking if needed.
+from utils import progress_bar  # Optional for progress indication.
 from vars import API_ID, API_HASH, BOT_TOKEN
 
 from aiohttp import ClientSession
@@ -24,19 +24,18 @@ from pyrogram.types import Message
 from pyrogram.errors import FloodWait
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-# --- Helper to sanitize filenames ---
+
+# --- Helper: Normalize and sanitize filenames ---
 def sanitize_filename(name, max_length=60):
-    """
-    Normalize and remove non-ASCII characters and unwanted symbols.
-    """
-    # Normalize Unicode to NFKD form and encode to ASCII (ignoring non-convertible characters)
+    # Normalize Unicode and remove non-ASCII characters
     name = unicodedata.normalize('NFKD', name)
     name = name.encode('ascii', 'ignore').decode('ascii')
-    # Remove characters except alphanumerics, whitespace, dashes and underscores
+    # Remove unwanted punctuation (keeping alphanumerics, underscores, dashes)
     name = re.sub(r'[^\w\s-]', '', name).strip()
-    # Replace whitespace with underscore
+    # Replace all whitespace with underscores
     name = re.sub(r'\s+', '_', name)
-    return name[:max_length]
+    return name[:max_length].rstrip('_')
+
 
 bot = Client(
     "bot",
@@ -45,6 +44,7 @@ bot = Client(
     bot_token=BOT_TOKEN
 )
 
+
 @bot.on_message(filters.command(["start"]))
 async def start(bot: Client, m: Message):
     await m.reply_text(
@@ -52,10 +52,12 @@ async def start(bot: Client, m: Message):
         f"Send /upload to begin.\n\nUse /stop to terminate any ongoing task.</b>"
     )
 
+
 @bot.on_message(filters.command("stop"))
 async def restart_handler(_, m: Message):
     await m.reply_text("**Stopped**🚦", quote=True)
     os.execl(sys.executable, sys.executable, *sys.argv)
+
 
 @bot.on_message(filters.command(["upload"]))
 async def upload(bot: Client, m: Message):
@@ -64,16 +66,16 @@ async def upload(bot: Client, m: Message):
     txt_file_path = await input_msg.download()
     await input_msg.delete(True)
 
-    # Create downloads folder for this chat if not exists
-    path = f"./downloads/{m.chat.id}"
-    os.makedirs(path, exist_ok=True)
+    # Build a dedicated download folder for this chat
+    download_dir = os.path.join(".", "downloads", str(m.chat.id))
+    os.makedirs(download_dir, exist_ok=True)
 
     try:
         with open(txt_file_path, "r") as f:
             content = f.read()
         lines = content.strip().split("\n")
         links = []
-        # Expecting each line contains a text label & a URL separated by "://"
+        # Each line is expected to have a label and URL separated by "://"
         for line in lines:
             if "://" in line:
                 parts = line.split("://", 1)
@@ -126,7 +128,7 @@ async def upload(bot: Client, m: Message):
     input3: Message = await bot.listen(editable.chat.id)
     caption = input3.text.strip()
     await input3.delete(True)
-    
+
     highlighter = f"️ ⁪⁬⁮⁮⁮"
     final_caption = highlighter if caption == "Robin" else caption
 
@@ -146,12 +148,14 @@ async def upload(bot: Client, m: Message):
 
     try:
         for i in range(count - 1, len(links)):
-            # Sanitize file name from the label (first part of the line)
+            # Sanitize the label (first part of each TXT line) for a clean filename.
             name_source = links[i][0]
             sanitized_name = sanitize_filename(name_source)
             name = f'{str(count).zfill(3)}_{sanitized_name}'
-            
-            # Reconstruct the URL from the second part
+            # Define the output path (ensuring the file is stored in the proper folder)
+            output_file = os.path.join(download_dir, f"{name}.mp4")
+
+            # Reconstruct the URL from the second part of the line.
             url_part = links[i][1].strip()
             url = "https://" + url_part
             url = url.replace("file/d/", "uc?export=download&id=")
@@ -160,7 +164,7 @@ async def upload(bot: Client, m: Message):
             url = url.replace("?modestbranding=1", "")
             url = url.replace("/view?usp=sharing", "")
 
-            # Special handling for visionias links
+            # Special handling for visionias links:
             if "visionias" in url:
                 async with ClientSession() as session:
                     async with session.get(url, headers={
@@ -181,7 +185,7 @@ async def upload(bot: Client, m: Message):
                         if m3u8_match:
                             url = m3u8_match.group(1)
 
-            # Handling for ClassPlusApp videos
+            # Handling for ClassPlusApp videos:
             elif 'videos.classplusapp' in url:
                 response = requests.get(
                     f'https://api.classplusapp.com/cams/uploader/video/jw-signed-url?url={url}',
@@ -190,31 +194,30 @@ async def upload(bot: Client, m: Message):
                 if response.status_code == 200:
                     url = response.json().get('url', url)
 
-            # Convert MPD streams to m3u8 if needed
+            # Convert MPD streams to m3u8 if needed:
             elif '/master.mpd' in url:
                 id_part = url.split("/")[-2]
                 url = "https://d26g5bnklkwsh4.cloudfront.net/" + id_part + "/master.m3u8"
 
-            # Determine the quality format string for yt-dlp
+            # Determine the quality format string for yt-dlp:
             if "youtu" in url:
                 ytf = f"b[height<={raw_text2}][ext=mp4]/bv[height<={raw_text2}][ext=mp4]+ba[ext=m4a]/b[ext=mp4]"
             else:
                 ytf = f"b[height<={raw_text2}]/bv[height<={raw_text2}]+ba/b/bv+ba"
-            
-            # Build the yt-dlp command; using a simpler command for "jw-prod" URLs
+
+            # Build the yt-dlp command (using the full output path without external downloader options):
             if "jw-prod" in url:
-                cmd = f'yt-dlp -o "{name}.mp4" "{url}"'
+                cmd = f'yt-dlp -o "{output_file}" "{url}"'
             else:
-                cmd = f'yt-dlp -f "{ytf}" "{url}" -o "{name}.mp4"'
-            
-            # Debug: print the command for YouTube links
+                cmd = f'yt-dlp -f "{ytf}" "{url}" -o "{output_file}"'
+
             if "youtu" in url:
                 print(f"Downloading YouTube link with command: {cmd}")
-            
+
             try:
                 cc = f'**[📽️] Vid_ID:** {str(count).zfill(3)}.** {name}{final_caption}.mkv\n**𝔹ᴀᴛᴄʜ** » **{batch_name}**'
                 cc1 = f'**[📁] Pdf_ID:** {str(count).zfill(3)}. {name}{final_caption}.pdf \n**𝔹ᴀᴛᴄʜ** » **{batch_name}**'
-                
+
                 if "drive" in url:
                     try:
                         file_downloaded = await helper.download(url, name)
@@ -226,40 +229,50 @@ async def upload(bot: Client, m: Message):
                         await m.reply_text(str(e))
                         time.sleep(e.x)
                         continue
-                
+
                 elif ".pdf" in url:
                     try:
-                        cmd_pdf = f'yt-dlp -o "{name}.pdf" "{url}"'
+                        pdf_output = output_file.replace(".mp4", ".pdf")
+                        cmd_pdf = f'yt-dlp -o "{pdf_output}" "{url}"'
                         download_cmd = f"{cmd_pdf} -R 25 --fragment-retries 25"
                         os.system(download_cmd)
-                        await bot.send_document(chat_id=m.chat.id, document=f'{name}.pdf', caption=cc1)
+                        await bot.send_document(chat_id=m.chat.id, document=pdf_output, caption=cc1)
                         count += 1
-                        os.remove(f'{name}.pdf')
+                        os.remove(pdf_output)
                     except FloodWait as e:
                         await m.reply_text(str(e))
                         time.sleep(e.x)
                         continue
-                
+
                 else:
                     status_message = (
                         f"**⥥ 🄳🄾🅆🄽🄻🄾🄰🄳🄸🄽🄶⬇️⬇️... »**\n\n"
                         f"**📝Name »** `{name}`\n❄Quality » {raw_text2}\n\n**🔗URL »** `{url}`"
                     )
                     prog = await m.reply_text(status_message)
-                    res_file = await helper.download_video(url, cmd, name)
+                    try:
+                        res_file = await helper.download_video(url, cmd, name)
+                    except Exception as e:
+                        err_msg = str(e)
+                        # If error indicates missing file or a sign-in requirement, skip this video.
+                        if "No such file or directory" in err_msg or "Sign in to confirm" in err_msg:
+                            await m.reply_text(f"**Skipping video {name}: {err_msg.strip()}**")
+                            continue
+                        else:
+                            await m.reply_text(f"**Download interrupted for Name:** {name}\nError: {err_msg}\n**Link:** `{url}`")
+                            continue
                     await prog.delete(True)
                     await helper.send_vid(bot, m, cc, res_file, thumb, name, prog)
                     count += 1
                     time.sleep(1)
-            
+
             except Exception as e:
-                await m.reply_text(
-                    f"**Download interrupted for Name:** {name}\nError: {str(e)}\n**Link:** `{url}`"
-                )
+                await m.reply_text(f"**Download interrupted for Name:** {name}\nError: {str(e)}\n**Link:** `{url}`")
                 continue
 
     except Exception as e:
         await m.reply_text(f"Error occurred: {str(e)}")
     await m.reply_text("**𝔻ᴏɴᴇ 𝔹ᴏ𝕤𝕤😎**")
+
 
 bot.run()
