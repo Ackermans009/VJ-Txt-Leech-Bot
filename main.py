@@ -61,7 +61,7 @@ async def restart_handler(_, m: Message):
 
 @bot.on_message(filters.command(["upload"]))
 async def upload(bot: Client, m: Message):
-    editable = await m.reply_text("𝕤ᴇɴᴅ ᴛxᴛ fær ɪɴᴘᴜᴛ ⚡️")
+    editable = await m.reply_text("𝕤ᴇɴᴅ ᴛxᴛ fæɾ ɪɴᴘᴜᴛ ⚡️")
     input_msg: Message = await bot.listen(editable.chat.id)
     txt_file_path = await input_msg.download()
     await input_msg.delete(True)
@@ -199,9 +199,12 @@ async def upload(bot: Client, m: Message):
                 id_part = url.split("/")[-2]
                 url = "https://d26g5bnklkwsh4.cloudfront.net/" + id_part + "/master.m3u8"
 
-            # For YouTube links, use a simpler format selection.
+            # For YouTube links, use a custom User-Agent and Referer to try to bypass the sign-in check.
             if "youtu" in url:
-                cmd = f'yt-dlp -f best "{url}" -o "{output_file}"'
+                cmd = (
+                    f'yt-dlp --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" '
+                    f'--add-header "referer: https://www.youtube.com/" -f best "{url}" -o "{output_file}"'
+                )
             else:
                 ytf = f"b[height<={raw_text2}]/bv[height<={raw_text2}]+ba/b/bv+ba"
                 cmd = f'yt-dlp -f "{ytf}" "{url}" -o "{output_file}"'
@@ -249,6 +252,7 @@ async def upload(bot: Client, m: Message):
                         res_file = await helper.download_video(url, cmd, name)
                     except Exception as e:
                         err_msg = str(e)
+                        # If the output file was not created (due to sign-in errors), skip this video.
                         if "No such file or directory" in err_msg or "Sign in to confirm" in err_msg:
                             await m.reply_text(f"**Skipping video {name}: {err_msg.strip()}**")
                             continue
@@ -256,7 +260,6 @@ async def upload(bot: Client, m: Message):
                             await m.reply_text(f"**Download interrupted for Name:** {name}\nError: {err_msg}\n**Link:** `{url}`")
                             continue
 
-                    # Check if the expected file exists before proceeding.
                     if not os.path.isfile(res_file):
                         await m.reply_text(f"**Skipping video {name}: File not found after download.**")
                         continue
